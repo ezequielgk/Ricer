@@ -109,6 +109,8 @@ It is stamp-cached (same wallpaper + same settings → no work) and safe to leav
 ### Features
 
 * **Live palette**: auto-regenerates the palette from the current wallpaper every time Noctalia's wallpaper changes (native `wallpaper_changed` hook, v5+)
+* **Community format 2**: palettes are written in the current Noctalia palette format (`"version": 2`, snake_case roles), passing the [community-palettes](https://github.com/noctalia-dev/community-palettes) CI check including WCAG contrast (accents are auto-darkened/brightened until every `on_x` pair reaches ≥ 3.0:1)
+* `wallpaper-to-noctalia --migrate [files...]` converts older format 1 palettes (`mPrimary`, `selectionFg`, ...) to format 2 in place, losslessly
 * **Live preview** of the palette while you tune (chafa sixel)
 * **Dark + light variants**, both calibrated (the light one inverts surfaces but darkens accents to keep contrast)
 * **Unified background**: `mSurface` == `terminal.background` — the shell and terminal apps share the exact same color

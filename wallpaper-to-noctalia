@@ -128,6 +128,27 @@ def lum_hex(h: str) -> float:
     return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 
 
+def contrast(a: str, b: str) -> float:
+    la, lb = lum_hex(a), lum_hex(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def ensure_contrast(fg: str, bg: str, target: float = 3.0) -> str:
+    """Ajusta el fondo (acento) hasta que el par on_x/x alcance el ratio.
+    El fg no se toca: en dark el acento se aclara (fg oscuro encima),
+    en light se oscurece (fg claro encima). Igual que el check de CI
+    (floor 2.0, warn <3.0): apuntamos a >=3.0 para que no haya warnings."""
+    cur = contrast(fg, bg)
+    if cur >= target:
+        return bg
+    factor = 1.06 if lum_hex(fg) < lum_hex(bg) else 0.94
+    for _ in range(60):
+        bg = shade(bg, factor)
+        if contrast(fg, bg) >= target:
+            return bg
+    return bg
+
+
 # Piso de luminancia del fondo dark: evita fondos casi negro en wallpapers
 # oscuros (estilo Cafecito/Noir, ~luma de #171717).
 MIN_DARK_LUM = 0.0085
@@ -153,22 +174,28 @@ def build_dark(c: dict) -> dict:
     bg, fg = c["bg"], c["fg"]
     primario, secundario, terciario = pick_accents(c)
     superficie = dark_surface(bg)
+    on = bg[0]  # texto sobre acentos (oscuro en dark)
+    primario = ensure_contrast(on, primario)
+    secundario = ensure_contrast(on, secundario)
+    terciario = ensure_contrast(on, terciario)
+    error = ensure_contrast(on, base["red"])
+    hover = ensure_contrast(fg[0], bg[3])
     return {
-        "mPrimary": primario, "mOnPrimary": bg[0],
-        "mSecondary": secundario, "mOnSecondary": bg[0],
-        "mTertiary": terciario, "mOnTertiary": bg[0],
-        "mError": base["red"], "mOnError": bg[0],
-        # mSurface == terminal.background (fondo identico para terminal)
-        "mSurface": superficie, "mOnSurface": fg[0],
-        "mSurfaceVariant": bg[2], "mOnSurfaceVariant": fg[0],
-        "mOutline": bg[4], "mShadow": shade(bg[0], 0.6),
-        "mHover": bg[3], "mOnHover": fg[0],
+        "primary": primario, "on_primary": on,
+        "secondary": secundario, "on_secondary": on,
+        "tertiary": terciario, "on_tertiary": on,
+        "error": error, "on_error": on,
+        # surface == terminal.background (fondo identico para terminal)
+        "surface": superficie, "on_surface": fg[0],
+        "surface_container": bg[2], "on_surface_variant": fg[0],
+        "outline_variant": bg[4], "shadow": shade(bg[0], 0.6),
+        "hover": hover, "on_hover": fg[0],
         "terminal": {
             "normal": {k: base[k] for k in ANSI},
             "bright": {k: bright[k] for k in ANSI},
             "foreground": fg[0], "background": superficie,
-            "selectionFg": bg[0], "selectionBg": primario,
-            "cursorText": bg[0], "cursor": fg[0],
+            "selection_fg": bg[0], "selection_bg": primario,
+            "cursor_text": bg[0], "cursor": fg[0],
         },
     }
 
@@ -182,15 +209,20 @@ def build_light(dark_c: dict, light_c: dict) -> dict:
     primario, secundario, terciario = pick_accents(dark_c)
     primario, secundario = shade(primario, 0.9), shade(secundario, 0.85)
     terciario, error = shade(terciario, 0.85), shade(dark_c["base"]["red"], 0.82)
+    # asegurar on_x legible sobre cada acento (CI: floor 2.0, warn <3.0)
+    primario = ensure_contrast(s0, primario)
+    secundario = ensure_contrast(s0, secundario)
+    terciario = ensure_contrast(s0, terciario)
+    error = ensure_contrast(s0, error)
     return {
-        "mPrimary": primario, "mOnPrimary": s0,
-        "mSecondary": secundario, "mOnSecondary": s0,
-        "mTertiary": terciario, "mOnTertiary": s0,
-        "mError": error, "mOnError": s0,
-        "mSurface": s0, "mOnSurface": fg0,
-        "mSurfaceVariant": s1, "mOnSurfaceVariant": fg0,
-        "mOutline": s4, "mShadow": shade(s4, 0.7),
-        "mHover": s2, "mOnHover": fg0,
+        "primary": primario, "on_primary": s0,
+        "secondary": secundario, "on_secondary": s0,
+        "tertiary": terciario, "on_tertiary": s0,
+        "error": error, "on_error": s0,
+        "surface": s0, "on_surface": fg0,
+        "surface_container": s1, "on_surface_variant": fg0,
+        "outline_variant": s4, "shadow": shade(s4, 0.7),
+        "hover": ensure_contrast(fg0, s2), "on_hover": fg0,
         "terminal": {
             "normal": {k: (s4 if k == "black" else
                            dark_c["bg"][0] if k == "white" else
@@ -199,14 +231,54 @@ def build_light(dark_c: dict, light_c: dict) -> dict:
                            shade(dark_c["bg"][0], 0.62) if k == "white" else
                            shade(dark_c["bright"][k], 0.79)) for k in ANSI},
             "foreground": fg0, "background": s0,
-            "selectionFg": s0, "selectionBg": primario,
-            "cursorText": s0, "cursor": fg0,
+            "selection_fg": s0, "selection_bg": primario,
+            "cursor_text": s0, "cursor": fg0,
         },
     }
 
 
+FMT1_TO_FMT2 = {
+    "mPrimary": "primary", "mOnPrimary": "on_primary",
+    "mSecondary": "secondary", "mOnSecondary": "on_secondary",
+    "mTertiary": "tertiary", "mOnTertiary": "on_tertiary",
+    "mError": "error", "mOnError": "on_error",
+    "mSurface": "surface", "mOnSurface": "on_surface",
+    "mSurfaceVariant": "surface_container",
+    "mOnSurfaceVariant": "on_surface_variant",
+    "mOutline": "outline_variant", "mShadow": "shadow",
+    "mHover": "hover", "mOnHover": "on_hover",
+    "selectionFg": "selection_fg", "selectionBg": "selection_bg",
+    "cursorText": "cursor_text",
+}
+
+
+def migrate_file(path: Path) -> None:
+    """Formato 1 -> formato 2 (renombres 1:1, sin cambio de colores)."""
+    data = json.loads(path.read_text())
+    if data.get("version") == 2:
+        print(f"ya es formato 2: {path}")
+        return
+    for mode in ("dark", "light"):
+        if mode not in data:
+            continue
+        data[mode] = {FMT1_TO_FMT2.get(k, k): v for k, v in data[mode].items()}
+        term = data[mode].get("terminal")
+        if isinstance(term, dict):
+            data[mode]["terminal"] = {FMT1_TO_FMT2.get(k, k): v
+                                      for k, v in term.items()}
+    data.pop("version", None)
+    data = {"version": 2, **data}
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"migrada a formato 2: {path}")
+
+
 def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if "--migrate" in sys.argv:
+        files = args or sorted(PALETTES_DIR.glob("*.json"))
+        for f in files:
+            migrate_file(Path(f).expanduser().resolve())
+        return
     if not args:
         sys.exit(__doc__)
     image = Path(args[0]).expanduser().resolve()
@@ -233,7 +305,7 @@ def main() -> None:
         tema_d = tema_base
         tema_l = tema_inv
 
-    palette = {"dark": build_dark(tema_d), "light": build_light(tema_d, tema_l)}
+    palette = {"version": 2, "dark": build_dark(tema_d), "light": build_light(tema_d, tema_l)}
     PALETTES_DIR.mkdir(parents=True, exist_ok=True)
     out = PALETTES_DIR / f"{nombre}.json"
     out.write_text(json.dumps(palette, indent=2) + "\n")

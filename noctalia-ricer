@@ -141,6 +141,22 @@ def lum_hex(h):
     r, g, b = hex_rgb(h)
     return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 
+def contrast(a, b):
+    la, lb = lum_hex(a), lum_hex(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+def ensure_contrast(fg, bg, target=3.0):
+    """Ajusta el fondo (acento) hasta que el par on_x/x alcance el ratio.
+    Igual que el check de CI (floor 2.0, warn <3.0): apuntamos a >=3.0."""
+    if contrast(fg, bg) >= target:
+        return bg
+    factor = 1.06 if lum_hex(fg) < lum_hex(bg) else 0.94
+    for _ in range(60):
+        bg = shade(bg, factor)
+        if contrast(fg, bg) >= target:
+            return bg
+    return bg
+
 # Piso de luminancia del fondo dark: evita fondos casi negro en wallpapers
 # oscuros (estilo Cafecito/Noir, ~luma de #171717).
 MIN_DARK_LUM = 0.0085
@@ -164,23 +180,29 @@ def build_dark(c):
     bg, fg = c["bg"], c["fg"]
     primario, secundario, terciario = pick_accents(c)
     superficie = dark_surface(bg)
+    on = bg[0]  # texto sobre acentos (oscuro en dark)
+    primario = ensure_contrast(on, primario)
+    secundario = ensure_contrast(on, secundario)
+    terciario = ensure_contrast(on, terciario)
+    error = ensure_contrast(on, base["red"])
+    hover = ensure_contrast(fg[0], bg[3])
     return {
-        "mPrimary": primario, "mOnPrimary": bg[0],
-        "mSecondary": secundario, "mOnSecondary": bg[0],
-        "mTertiary": terciario, "mOnTertiary": bg[0],
-        "mError": base["red"], "mOnError": bg[0],
-        # mSurface == terminal.background: para apps de terminal el fondo debe
+        "primary": primario, "on_primary": on,
+        "secondary": secundario, "on_secondary": on,
+        "tertiary": terciario, "on_tertiary": on,
+        "error": error, "on_error": on,
+        # surface == terminal.background: para apps de terminal el fondo debe
         # ser identico al del shell (convencion Cafecito/Noir).
-        "mSurface": superficie, "mOnSurface": fg[0],
-        "mSurfaceVariant": bg[2], "mOnSurfaceVariant": fg[0],
-        "mOutline": bg[4], "mShadow": shade(bg[0], 0.6),
-        "mHover": bg[3], "mOnHover": fg[0],
+        "surface": superficie, "on_surface": fg[0],
+        "surface_container": bg[2], "on_surface_variant": fg[0],
+        "outline_variant": bg[4], "shadow": shade(bg[0], 0.6),
+        "hover": hover, "on_hover": fg[0],
         "terminal": {
             "normal": {k: base[k] for k in ANSI},
             "bright": {k: bright[k] for k in ANSI},
             "foreground": fg[0], "background": superficie,
-            "selectionFg": bg[0], "selectionBg": primario,
-            "cursorText": bg[0], "cursor": fg[0],
+            "selection_fg": bg[0], "selection_bg": primario,
+            "cursor_text": bg[0], "cursor": fg[0],
         },
     }
 
@@ -193,15 +215,20 @@ def build_light(dark_c, light_c):
     primario, secundario, terciario = pick_accents(dark_c)
     primario, secundario = shade(primario, 0.9), shade(secundario, 0.85)
     terciario, error = shade(terciario, 0.85), shade(dark_c["base"]["red"], 0.82)
+    # asegurar on_x legible sobre cada acento (CI: floor 2.0, warn <3.0)
+    primario = ensure_contrast(s0, primario)
+    secundario = ensure_contrast(s0, secundario)
+    terciario = ensure_contrast(s0, terciario)
+    error = ensure_contrast(s0, error)
     return {
-        "mPrimary": primario, "mOnPrimary": s0,
-        "mSecondary": secundario, "mOnSecondary": s0,
-        "mTertiary": terciario, "mOnTertiary": s0,
-        "mError": error, "mOnError": s0,
-        "mSurface": s0, "mOnSurface": fg0,
-        "mSurfaceVariant": s1, "mOnSurfaceVariant": fg0,
-        "mOutline": s4, "mShadow": shade(s4, 0.7),
-        "mHover": s2, "mOnHover": fg0,
+        "primary": primario, "on_primary": s0,
+        "secondary": secundario, "on_secondary": s0,
+        "tertiary": terciario, "on_tertiary": s0,
+        "error": error, "on_error": s0,
+        "surface": s0, "on_surface": fg0,
+        "surface_container": s1, "on_surface_variant": fg0,
+        "outline_variant": s4, "shadow": shade(s4, 0.7),
+        "hover": ensure_contrast(fg0, s2), "on_hover": fg0,
         "terminal": {
             "normal": {k: (s4 if k == "black" else
                            dark_c["bg"][0] if k == "white" else
@@ -210,8 +237,8 @@ def build_light(dark_c, light_c):
                            shade(dark_c["bg"][0], 0.62) if k == "white" else
                            shade(dark_c["bright"][k], 0.79)) for k in ANSI},
             "foreground": fg0, "background": s0,
-            "selectionFg": s0, "selectionBg": primario,
-            "cursorText": s0, "cursor": fg0,
+            "selection_fg": s0, "selection_bg": primario,
+            "cursor_text": s0, "cursor": fg0,
         },
     }
 
@@ -224,7 +251,7 @@ def main():
         light = build_light(dark_c, light_c)
     else:
         light = build_dark(dark_c)
-    print(json.dumps({"dark": build_dark(dark_c), "light": light}, indent=2))
+    print(json.dumps({"version": 2, "dark": build_dark(dark_c), "light": light}, indent=2))
 
 if __name__ == "__main__":
     main()
