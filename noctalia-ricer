@@ -700,9 +700,9 @@ menu_settings() {
         mapfile -t schemes < <(find "$PALETTES_DIR" -maxdepth 1 -name "*.json" ! -name "registry.json" -printf '%f\n' | sort)
 
         local out ret key
-        out=$(printf "%s\n" "${schemes[@]}" | fzf --multi --expect=ctrl-d,ctrl-r,ctrl-m \
+        out=$(printf "%s\n" "${schemes[@]}" | fzf --multi --expect=ctrl-d,ctrl-r,ctrl-g \
             --prompt="󰏘  Edit Local Palette ❯ " \
-            --header="[ENTER]: Edit | [CTRL-R]: Rename | [CTRL-D]: Delete | [CTRL-M]: Migrate to format 2 (TAB: multi-select) | [ESC]: Back" \
+            --header="[ENTER]: Edit | [CTRL-R]: Rename | [CTRL-D]: Delete | [CTRL-G]: Migrate to format 2 (TAB: multi-select) | [ESC]: Back" \
             --bind="ctrl-a:select-all" \
             --preview "'$PREVIEW_SCRIPT' '$PALETTES_DIR/{}'" \
             --preview-window=right:50%:border-left)
@@ -742,7 +742,8 @@ menu_settings() {
             continue
         fi
 
-        if [[ "$key" == "ctrl-m" ]]; then
+        # NOTA: ctrl-m NO se puede usar con --expect (ctrl-m == Enter en ASCII)
+        if [[ "$key" == "ctrl-g" ]]; then
             local m=0 skipped=0 f
             for f in "${sel[@]}"; do
                 local res
