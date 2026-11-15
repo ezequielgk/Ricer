@@ -298,8 +298,8 @@ fi
 for variant in dark light; do
     [[ "$(jq -r "has(\"$variant\")" "$file")" != "true" ]] && continue
     echo -e "\e[1;35m $variant\e[0m"
-    swatch_row "UI"       $(jq -r ".$variant | .mPrimary // empty, .mSecondary // empty, .mTertiary // empty, .mError // empty" "$file" 2>/dev/null)
-    swatch_row "Surface"  $(jq -r ".$variant | .mSurface // empty, .mSurfaceVariant // empty, .mOutline // empty, .mHover // empty" "$file" 2>/dev/null)
+    swatch_row "UI"       $(jq -r ".$variant | .primary // .mPrimary // empty, .secondary // .mSecondary // empty, .tertiary // .mTertiary // empty, .error // .mError // empty" "$file" 2>/dev/null)
+    swatch_row "Surface"  $(jq -r ".$variant | .surface // .mSurface // empty, .surface_container // .mSurfaceVariant // empty, .outline_variant // .mOutline // empty, .hover // .mHover // empty" "$file" 2>/dev/null)
     swatch_row "Terminal" $(jq -r ".$variant.terminal?.normal? | [.black, .red, .green, .yellow, .blue, .magenta, .cyan, .white] // [] | .[]?" "$file" 2>/dev/null)
     swatch_row "Bright"   $(jq -r ".$variant.terminal?.bright? | [.black, .red, .green, .yellow, .blue, .magenta, .cyan, .white] // [] | .[]?" "$file" 2>/dev/null)
     echo ""
@@ -389,13 +389,13 @@ print("light" if 0.2126*r+0.7152*g+0.0722*b > 128 else "dark")' "$theme_a" 2>/de
         echo ""
 
         if [[ -s "$palette_file" ]]; then
-            swatch_row "UI dark"  "$(jq -r .dark.mPrimary "$palette_file")" "$(jq -r .dark.mSecondary "$palette_file")" "$(jq -r .dark.mTertiary "$palette_file")" "$(jq -r .dark.mError "$palette_file")"
-            swatch_row "Surface"  "$(jq -r .dark.mSurface "$palette_file")" "$(jq -r .dark.mSurfaceVariant "$palette_file")" "$(jq -r .dark.mOutline "$palette_file")" "$(jq -r .dark.mHover "$palette_file")"
+            swatch_row "UI dark"  "$(jq -r '.dark.primary // .dark.mPrimary' "$palette_file")" "$(jq -r '.dark.secondary // .dark.mSecondary' "$palette_file")" "$(jq -r '.dark.tertiary // .dark.mTertiary' "$palette_file")" "$(jq -r '.dark.error // .dark.mError' "$palette_file")"
+            swatch_row "Surface"  "$(jq -r '.dark.surface // .dark.mSurface' "$palette_file")" "$(jq -r '.dark.surface_container // .dark.mSurfaceVariant' "$palette_file")" "$(jq -r '.dark.outline_variant // .dark.mOutline' "$palette_file")" "$(jq -r '.dark.hover // .dark.mHover' "$palette_file")"
             swatch_row "Terminal" $(jq -r '.dark.terminal | [.normal.black, .normal.red, .normal.green, .normal.yellow, .normal.blue, .normal.magenta, .normal.cyan, .normal.white] | .[]' "$palette_file")
             swatch_row "Bright"   $(jq -r '.dark.terminal | [.bright.black, .bright.red, .bright.green, .bright.yellow, .bright.blue, .bright.magenta, .bright.cyan, .bright.white] | .[]' "$palette_file")
-            swatch_row "Light"    "$(jq -r .light.mPrimary "$palette_file")" "$(jq -r .light.mSurface "$palette_file")" "$(jq -r .light.mOutline "$palette_file")"
+            swatch_row "Light"    "$(jq -r '.light.primary // .light.mPrimary' "$palette_file")" "$(jq -r '.light.surface // .light.mSurface' "$palette_file")" "$(jq -r '.light.outline_variant // .light.mOutline' "$palette_file")"
             echo ""
-            swatch_row "Term dark" "$(jq -r .dark.terminal.background "$palette_file")" "$(jq -r .dark.terminal.foreground "$palette_file")" "$(jq -r .dark.terminal.selectionBg "$palette_file")"
+            swatch_row "Term dark" "$(jq -r .dark.terminal.background "$palette_file")" "$(jq -r .dark.terminal.foreground "$palette_file")" "$(jq -r '.dark.terminal.selection_bg // .dark.terminal.selectionBg' "$palette_file")"
         else
             chafa -s "${FZF_PREVIEW_COLUMNS:-50}x${FZF_PREVIEW_LINES:-24}" "$thumb" 2>/dev/null
             echo -e "\n  \e[1;31m[Notice: Could not generate palette]\e[0m"
@@ -700,9 +700,9 @@ menu_settings() {
         mapfile -t schemes < <(find "$PALETTES_DIR" -maxdepth 1 -name "*.json" ! -name "registry.json" -printf '%f\n' | sort)
 
         local out ret key
-        out=$(printf "%s\n" "${schemes[@]}" | fzf --multi --expect=ctrl-d,ctrl-r \
+        out=$(printf "%s\n" "${schemes[@]}" | fzf --multi --expect=ctrl-d,ctrl-r,ctrl-m \
             --prompt="󰏘  Edit Local Palette ❯ " \
-            --header="[ENTER]: Edit | [CTRL-R]: Rename | [CTRL-D]: Delete (TAB: multi-select) | [ESC]: Back" \
+            --header="[ENTER]: Edit | [CTRL-R]: Rename | [CTRL-D]: Delete | [CTRL-M]: Migrate to format 2 (TAB: multi-select) | [ESC]: Back" \
             --bind="ctrl-a:select-all" \
             --preview "'$PREVIEW_SCRIPT' '$PALETTES_DIR/{}'" \
             --preview-window=right:50%:border-left)
@@ -739,6 +739,49 @@ menu_settings() {
             mv -f "$PALETTES_DIR/$old" "$PALETTES_DIR/$new_name.json"
             echo -e "${C_GREEN}[OK] Renamed: $old → $new_name.json${C_RESET}"
             sleep 0.8
+            continue
+        fi
+
+        if [[ "$key" == "ctrl-m" ]]; then
+            local m=0 skipped=0 f
+            for f in "${sel[@]}"; do
+                local res
+                res=$(python3 -c '
+import json, sys
+path = sys.argv[1]
+FMT1 = {"mPrimary":"primary","mOnPrimary":"on_primary","mSecondary":"secondary",
+        "mOnSecondary":"on_secondary","mTertiary":"tertiary","mOnTertiary":"on_tertiary",
+        "mError":"error","mOnError":"on_error","mSurface":"surface","mOnSurface":"on_surface",
+        "mSurfaceVariant":"surface_container","mOnSurfaceVariant":"on_surface_variant",
+        "mOutline":"outline_variant","mShadow":"shadow","mHover":"hover","mOnHover":"on_hover",
+        "selectionFg":"selection_fg","selectionBg":"selection_bg","cursorText":"cursor_text"}
+data = json.load(open(path))
+if data.get("version") == 2:
+    print("already"); sys.exit(0)
+for mode in ("dark", "light"):
+    if mode not in data: continue
+    data[mode] = {FMT1.get(k, k): v for k, v in data[mode].items()}
+    term = data[mode].get("terminal")
+    if isinstance(term, dict):
+        data[mode]["terminal"] = {FMT1.get(k, k): v for k, v in term.items()}
+data.pop("version", None)
+with open(path, "w") as fh:
+    json.dump({"version": 2, **data}, fh, indent=2)
+    fh.write("\n")
+print("migrated")' "$PALETTES_DIR/$f" 2>&1)
+                if [[ "$res" == "migrated" ]]; then
+                    echo -e "${C_GREEN}  󰄬 $f → formato 2${C_RESET}"
+                    m=$((m + 1))
+                elif [[ "$res" == "already" ]]; then
+                    echo -e "${C_CYAN}  󰅚 $f (ya es formato 2)${C_RESET}"
+                    skipped=$((skipped + 1))
+                else
+                    echo -e "${C_RED}  󰖷 $f: $res${C_RESET}"
+                fi
+            done
+            echo -e "${C_GREEN}[OK] $m migradas, $skipped ya estaban en formato 2.${C_RESET}"
+            noctalia msg config-reload >/dev/null 2>&1
+            sleep 1.2
             continue
         fi
 
