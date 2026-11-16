@@ -23,28 +23,39 @@ ACCENT_KEYS = ("red", "orange", "yellow", "green", "cyan", "blue", "magenta", "p
 
 def recol_theme(image: Path, spec: str | None = None) -> dict:
     """Tema recol desde imagen; si paniquea (pocos colores unicos), reintenta
-    con copia JPEG y luego con ruido. Nunca pasar -a con spec vacio."""
-    cmd = ["recol", "-m", str(image), "--json"]
-    if spec:
-        cmd += ["-a", spec]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode == 0 and proc.stdout.strip():
-        return json.loads(proc.stdout)["colors"]
-
+    con copia JPEG y luego con ruido. Nunca pasar -a con spec vacio.
+    recol escribe PPMs en /tmp nombrados por el stem del input: dos corridas
+    concurrentes sobre el mismo path colisionan y paniquean, por eso cada
+    llamada usa un symlink con nombre unico."""
+    import os as _os
     import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(image),
-             "-vf", "noise=alls=6:allf=t", "-qscale:v", "2", tmp.name],
-            capture_output=True,
-        )
-        cmd = ["recol", "-m", tmp.name, "--json"]
+
+    def _run(img_path: str, out: list) -> bool:
+        cmd = ["recol", "-m", img_path, "--json"]
         if spec:
             cmd += ["-a", spec]
         proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0 or not proc.stdout.strip():
-        sys.exit(f"error de recol: {proc.stderr.strip()}")
-    return json.loads(proc.stdout)["colors"]
+        out.append(proc)
+        return proc.returncode == 0 and proc.stdout.strip()
+
+    with tempfile.TemporaryDirectory() as td:
+        lnk = os.path.join(td, "r" + image.suffix)
+        _os.symlink(image, lnk)
+        procs: list = []
+        if _run(lnk, procs):
+            return json.loads(procs[0].stdout)["colors"]
+
+        # fallback: JPEG con ruido (nombre unico => sin colision de stems)
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(image),
+                 "-vf", "noise=alls=6:allf=t", "-qscale:v", "2", tmp.name],
+                capture_output=True,
+            )
+            if not _run(tmp.name, procs):
+                proc = procs[-1]
+                sys.exit(f"error de recol: {proc.stderr.strip()}")
+            return json.loads(procs[-1].stdout)["colors"]
 
 
 def is_light(colors: dict) -> bool:

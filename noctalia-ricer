@@ -349,13 +349,19 @@ swatch_row() {
 # el flujo de procesado). Sin esto el preview muere con traceback de python.
 recol_try() {
     local img="$1" spec="$2" out="$3"
+    local lnk
+    # symlink con nombre unico: recol escribe PPMs en /tmp segun el stem del
+    # input; dos corridas concurrentes con el mismo stem colisionan y paniquean
+    lnk=$(mktemp -u --suffix=".${img##*.}")
+    ln -s -- "$img" "$lnk"
     # brace + 2>/dev/null: silencia el "Abortado" que bash imprime cuando
     # recol paniquea (sino spamea el preview en cada reintento)
     if [[ -n "$spec" ]]; then
-        { recol -m "$img" -a "$spec" --json > "$out"; } 2>/dev/null
+        { recol -m "$lnk" -a "$spec" --json > "$out"; } 2>/dev/null
     else
-        { recol -m "$img" --json > "$out"; } 2>/dev/null
+        { recol -m "$lnk" --json > "$out"; } 2>/dev/null
     fi
+    rm -f "$lnk"
 }
 recol_fb() {
     local img="$1" spec="$2" out="$3"
@@ -918,11 +924,16 @@ process_palette() {
     # ruido agregado. NUNCA pasar -a con spec vacio (panica en cli.rs).
     run_recol() {
         local rsrc="$1" rspec="$2" rout="$3" rerr="$4"
-        local -a rargs=(-m "$rsrc" --json)
+        local rlnk
+        # symlink unico: evita la colision de /tmp/<stem>_<N>.ppm entre
+        # corridas concurrentes de recol sobre el mismo path
+        rlnk=$(mktemp -u --suffix=".${rsrc##*.}")
+        ln -s -- "$rsrc" "$rlnk"
+        local -a rargs=(-m "$rlnk" --json)
         [[ -n "$rspec" ]] && rargs+=(-a "$rspec")
         # brace + 2>/dev/null: silencia el "Abortado" de bash cuando recol paniquea
         if { recol "${rargs[@]}" 2>"$rerr" > "$rout"; } 2>/dev/null && [[ -s "$rout" ]]; then
-            return 0
+            rm -f "$rlnk"; return 0
         fi
         local rjpg
         rjpg=$(mktemp --suffix=.jpg)
@@ -930,12 +941,12 @@ process_palette() {
         local -a fargs=(-m "$rjpg" --json)
         [[ -n "$rspec" ]] && fargs+=(-a "$rspec")
         if { recol "${fargs[@]}" 2>"$rerr" > "$rout"; } 2>/dev/null && [[ -s "$rout" ]]; then
-            rm -f "$rjpg"; return 0
+            rm -f "$rlnk" "$rjpg"; return 0
         fi
         ffmpeg -y -loglevel error -i "$rsrc" -vf "noise=alls=6:allf=t" -qscale:v 2 "$rjpg" 2>/dev/null
         { recol "${fargs[@]}" 2>"$rerr" > "$rout"; } 2>/dev/null
         local rrc=$?
-        rm -f "$rjpg"
+        rm -f "$rlnk" "$rjpg"
         (( rrc == 0 )) && [[ -s "$rout" ]]
     }
 
