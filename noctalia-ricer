@@ -344,6 +344,35 @@ swatch_row() {
     echo ""
 }
 
+# recol con fallbacks: imagenes de pocos colores unicos (pixel-art) hacen
+# paniquear a recol; reintenta con JPEG y luego con ruido (misma cadena que
+# el flujo de procesado). Sin esto el preview muere con traceback de python.
+recol_try() {
+    local img="$1" spec="$2" out="$3"
+    if [[ -n "$spec" ]]; then
+        recol -m "$img" -a "$spec" --json > "$out" 2>/dev/null
+    else
+        recol -m "$img" --json > "$out" 2>/dev/null
+    fi
+}
+recol_fb() {
+    local img="$1" spec="$2" out="$3"
+    local fb="$cache_dir/fb_${stamp_hash}.jpg"
+    recol_try "$img" "$spec" "$out"
+    [[ -s "$out" ]] && return 0
+    ffmpeg -y -loglevel error -i "$img" -qscale:v 2 "$fb" 2>/dev/null
+    recol_try "$fb" "$spec" "$out"
+    [[ -s "$out" ]] && return 0
+    # ruido fuerte: en thumbs chicas alls=6 no basta para superar el piso
+    # de colores unicos que recol exige
+    ffmpeg -y -loglevel error -i "$img" -vf "noise=alls=20:allf=t" -qscale:v 2 "$fb" 2>/dev/null
+    recol_try "$fb" "$spec" "$out"
+    [[ -s "$out" ]] && return 0
+    # ultimo recurso: imagen original a resolucion completa + ruido
+    ffmpeg -y -loglevel error -i "$img" -vf "noise=alls=6:allf=t" -qscale:v 2 "$fb" 2>/dev/null
+    recol_try "$fb" "$spec" "$out"
+}
+
 {
     echo -e "\e[1;36m󰏘 Live Preview\e[0m"
     echo -e "  \e[1;35m Palette:\e[0m $name"
@@ -362,9 +391,9 @@ swatch_row() {
             theme_a="$cache_dir/themeA_${stamp_hash}.json"
             theme_b="$cache_dir/themeB_${stamp_hash}.json"
             if [[ -n "$adjust" ]]; then
-                recol -m "$thumb" -a "$adjust" --json 2>/dev/null > "$theme_a"
+                recol_fb "$thumb" "$adjust" "$theme_a"
             else
-                recol -m "$thumb" --json 2>/dev/null > "$theme_a"
+                recol_fb "$thumb" "" "$theme_a"
             fi
             # polaridad: si el tema base es claro, A=light (dark sale del invertido)
             if [[ "$(python3 -c '
@@ -375,13 +404,16 @@ r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
 print("light" if 0.2126*r+0.7152*g+0.0722*b > 128 else "dark")' "$theme_a" 2>/dev/null)" == "light" ]]; then
                 inv_spec="invert=50,brightness=5"
                 [[ -n "$adjust" ]] && inv_spec="$inv_spec,$adjust"
-                recol -m "$thumb" -a "$inv_spec" --json 2>/dev/null > "$theme_b"
-                python3 "$convert_script" "$theme_b" "$theme_a" > "$palette_file"
+                recol_fb "$thumb" "$inv_spec" "$theme_b"
+                # solo si ambos temas salieron (evita traceback con archivos vacios)
+                [[ -s "$theme_a" && -s "$theme_b" ]] && \
+                    python3 "$convert_script" "$theme_b" "$theme_a" > "$palette_file"
             else
                 inv_spec="invert=50"
                 [[ -n "$adjust" ]] && inv_spec="$inv_spec,$adjust"
-                recol -m "$thumb" -a "$inv_spec" --json 2>/dev/null > "$theme_b"
-                python3 "$convert_script" "$theme_a" "$theme_b" > "$palette_file"
+                recol_fb "$thumb" "$inv_spec" "$theme_b"
+                [[ -s "$theme_a" && -s "$theme_b" ]] && \
+                    python3 "$convert_script" "$theme_a" "$theme_b" > "$palette_file"
             fi
         fi
 
