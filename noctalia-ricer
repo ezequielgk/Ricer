@@ -470,6 +470,14 @@ load_config() {
         key="${key// /}"
         [[ -z "$key" || "$key" == \#* ]] && continue
         val="${val%$'\r'}"
+        # save_config guarda los strings entre comillas; el read literal no
+        # las evalua como hace source al parsear el hook: desquitar aqui
+        if [[ ${#val} -ge 2 ]]; then
+            case "$val" in
+                \"*\") val="${val#\"}"; val="${val%\"}" ;;
+                \'*\') val="${val#\'}"; val="${val%\'}" ;;
+            esac
+        fi
 
         case "$key" in
             SATURATION)   [[ "$val" =~ ^-?[0-9]+$ ]] && SATURATION="$val" ;;
